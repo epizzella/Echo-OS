@@ -33,8 +33,8 @@ pub const Time = OsCore.Time;
 pub const Error = OsCore.Error;
 pub const OsConfig = OsCore.OsConfig;
 
-/// The operating system will begin multitasking.  This function should only be
-/// called once.  Subsequent calls have no effect.  The frist time this function
+/// The operating system will begin multitasking. This function should only be
+/// called once.  Subsequent calls have no effect. The frist time this function
 /// is called it will not return as multitasking has started.
 pub fn startOS(comptime config: OsConfig) void {
     OsCore.startOS(config);

@@ -27,9 +27,19 @@ Echo OS has the following features:
 
 ## Getting Started
 
-Echo OS can be added to your project via zig fetch
+To add the master branch of Echo Os to your project:
 
-```zig fetch --save git+https://github.com/epizzella/Echo-OS```
+```
+zig fetch --save git+https://github.com/epizzella/Echo-OS
+```
+
+To add a tagged version of Echo Os to your project:
+
+```
+# Replace <REPLACE ME> with the version of Echo OS that you want to use
+zig fetch --save git+https://github.com/epizzella/Echo-OS/archive/refs/tags/<REPLACE ME>.tar.gz
+
+```
 
 Then add the following to your ```build.zig```:
 
@@ -49,18 +59,20 @@ Echo OS uses the ```cpu_model``` field in the ```target``` argument at comptime 
     });
 ```
 
+## API
+
 The entire API is accessabile through a single file:  os.zig.  You can use os.zig via @import: ```const Os = @import("EchoOS");```
 
 ### Basic Example
 
-The following is a basic example of creating a task and starting multitasking.  One task is created and multitasking is started.
+The following is a basic example of creating a task and starting multitasking.  A single task is created and multitasking is started.
 
 ```
 const Os = @import("EchoOS");   //Import Echo OS 
 const Task = Os.Task
 
 //task 1 subroutine
-fn task1() !void {      
+fn task1() !void {  
   while(true) {}
 }
 
@@ -79,11 +91,11 @@ var tcb = Task.create_task(.{
 export fn main() void() {
   //Initialize drivers before starting
 
-  // initalize the task & make the OS awares of it
+  // initalize the task & make the OS aware of it
   tcb.init();  
 
   //Start multitasking
-  Os.startOS(    
+  Os.startOS(  
     .clock_config = .{
         .cpu_clock_freq_hz = 64_000_000,
         .os_sys_clock_freq_hz = 1_000,
@@ -94,17 +106,4 @@ export fn main() void() {
 }
 ```
 
-## Initalization and Start Up
-
-```pub fn startOS(comptime config: OsConfig) void```
-
-- Multitasking is started by calling ```startOS``` which takes one comptime argumet of type ```OsConfig```.  This function should
-  only be called once.  Subsequent calls will have no effect.
-
-## Tasks
-Tasks (also known as threads) is a program that operates on the cpu as if it were the only program executing.  Echo OS
-supports multitasking via a premptive priority based scheduler.
-
-The API for creating/deleting/controlling task is part of os.zig and is named ```Task```.  Tasks can be created at run time or comptime by invoking the
-```create_task()``` function.  Once the task is created it must be initalized via ```init()``` which adds the task to the OS and allows the OS to schedule it.
-
+For a more detailed example please refer to the [Echo OS example projects.](https://github.com/epizzella/Echo-OS-Examples)

@@ -113,7 +113,7 @@ pub const EventGroup = struct {
         timeout_ms: u32 = 0,
     };
 
-    /// Block the running task until the pending event is set.  If the pending event
+    /// Block the running task until the pending event is set. If the pending event
     /// is set when awaitEvent is called the running task will not be blocked.
     pub fn awaitEvent(self: *Self, options: AwaitEventOptions) Error!usize {
         const running_task = try SyncControl.validateCallMajor();
@@ -149,7 +149,7 @@ pub const EventGroup = struct {
         task: *Task,
     };
 
-    /// Readys the task if it is waiting on the event group.  When the task next
+    /// Readys the task if it is waiting on the event group. When the task next
     /// runs awaitEvent() will return OsError.Aborted
     pub fn abortAwait(self: *Self, options: AbortOptions) Error!void {
         try Control.abort(&self._syncContext, options.task);
