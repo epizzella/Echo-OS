@@ -21,7 +21,7 @@ const ArchInterface = @import("../arch/arch_interface.zig");
 
 const Task = OsTask.Task;
 const task_control = &OsTask.task_control;
-var Arch = ArchInterface.Arch;
+const Arch = ArchInterface.Arch;
 
 pub const Control = SyncControl.SyncControl;
 const SyncContex = SyncControl.SyncContext;

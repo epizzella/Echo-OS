@@ -40,10 +40,12 @@ pub fn startOS(comptime config: OsConfig) void {
     OsCore.startOS(config);
 }
 
+//Disable all interrupts
 pub inline fn criticalStart() void {
     Arch.criticalStart();
 }
 
+//Enable all interrupts
 pub inline fn criticalEnd() void {
     Arch.criticalEnd();
 }

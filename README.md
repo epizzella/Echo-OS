@@ -51,6 +51,8 @@ Echo OS uses the ```cpu_model``` field in the ```target``` argument at comptime 
 
 The entire API is accessabile through a single file:  os.zig.  You can use os.zig via @import: ```const Os = @import("EchoOS");```
 
+### Basic Example
+
 The following is a basic example of creating a task and starting multitasking.  One task is created and multitasking is started.
 
 ```
@@ -99,39 +101,10 @@ export fn main() void() {
 - Multitasking is started by calling ```startOS``` which takes one comptime argumet of type ```OsConfig```.  This function should
   only be called once.  Subsequent calls will have no effect.
 
-### OS Config
-
-The configuration is a struct which contains 4 fields:
-
-- clock_config: ClockConfig - Confiure the tick rate of the OS
-
-  - os_sys_clock_freq_hz: u32 - The frequency of the OS system clock in hertz
-  - cpu_clock_freq_hz: u32 - The frequency of the CPU clock in hertz
-- idle_task_config: IdleTaskConfig - Configure the idle task
-
-  - idle_task_subroutine: *const fn () anyerror!void - Function that runs during the idle task
-  - idle_stack_size: usize - The size of the stack for the idle task
-- os_tick_callback: ?*const fn () void - Callback function called each time the OS System Tick is fired
-- timer_config: TimerConfig - Software timer configuration
-
-  - timer_enable: bool - Set to true to enable software timers
-  - timer_task_priority: u5 - The priority of the software timer task
-  - timer_stack_size: usize - The size of the stack for the software timer task
-
 ## Tasks
+Tasks (also known as threads) is a program that operates on the cpu as if it were the only program executing.  Echo OS
+supports multitasking via a premptive priority based scheduler.
 
-### Task Config
+The API for creating/deleting/controlling task is part of os.zig and is named ```Task```.  Tasks can be created at run time or comptime by invoking the
+```create_task()``` function.  Once the task is created it must be initalized via ```init()``` which adds the task to the OS and allows the OS to schedule it.
 
-### Time Managment
-
-### Intertask Communication
-
-## Synchronization
-
-### Event Groups
-
-### Mutexes
-
-### Semaphores
-
-## Software Timers
