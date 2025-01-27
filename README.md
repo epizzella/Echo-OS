@@ -37,7 +37,7 @@ To add a tagged version of Echo Os to your project:
 
 ```
 # Replace <REPLACE ME> with the version of Echo OS that you want to use
-zig fetch --save git+https://github.com/epizzella/Echo-OS/archive/refs/tags/<REPLACE ME>.tar.gz
+zig fetch --save git+https://github.com/epizzella/Echo-OS#<REPLACE ME>
 
 ```
 
