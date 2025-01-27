@@ -20,7 +20,7 @@ const Task = OsTask.Task;
 const SyncControl = @import("sync_control.zig");
 const ArchInterface = @import("../arch/arch_interface.zig");
 
-var Arch = ArchInterface.Arch;
+const Arch = ArchInterface.Arch;
 const Error = OsCore.Error;
 const task_control = &OsTask.task_control;
 pub const Control = SyncControl.SyncControl;
@@ -57,6 +57,10 @@ pub const EventGroup = struct {
         }
     }
 
+    pub fn deinit(self: *Self) Error!void {
+        try Control.remove(&self._syncContext);
+    }
+
     const writeOptions = struct {
         /// The event flag
         event: usize,
@@ -64,7 +68,7 @@ pub const EventGroup = struct {
 
     /// Set the event flag of an event group
     pub fn writeEvent(self: *Self, options: writeOptions) Error!void {
-        const running_task = try OsCore.validateCallMinor();
+        const running_task = try SyncControl.validateCallMinor();
         if (!self._syncContex._init) return Error.Uninitialized;
 
         Arch.criticalStart();
@@ -109,10 +113,10 @@ pub const EventGroup = struct {
         timeout_ms: u32 = 0,
     };
 
-    /// Block the running task until the pending event is set.  If the pending event
+    /// Block the running task until the pending event is set. If the pending event
     /// is set when awaitEvent is called the running task will not be blocked.
     pub fn awaitEvent(self: *Self, options: AwaitEventOptions) Error!usize {
-        const running_task = try OsCore.validateCallMajor();
+        const running_task = try SyncControl.validateCallMajor();
         if (!self._syncContex._init) return Error.Uninitialized;
 
         running_task._SyncContext.pending_event = options.event_mask;
@@ -145,7 +149,7 @@ pub const EventGroup = struct {
         task: *Task,
     };
 
-    /// Readys the task if it is waiting on the event group.  When the task next
+    /// Readys the task if it is waiting on the event group. When the task next
     /// runs awaitEvent() will return OsError.Aborted
     pub fn abortAwait(self: *Self, options: AbortOptions) Error!void {
         try Control.abort(&self._syncContext, options.task);

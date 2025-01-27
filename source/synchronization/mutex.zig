@@ -31,16 +31,18 @@ const SyncContex = SyncControl.SyncContext;
 
 pub const Mutex = struct {
     const Self = @This();
-    const Config = struct { name: []const u8, enable_priority_inheritance: bool = false };
+    const CreateOptions = struct { name: []const u8, enable_priority_inheritance: bool = false };
 
     _name: []const u8,
     _owner: ?*Task = null,
+    _prioInherit: bool,
     _syncContext: SyncContex = .{},
 
     /// Create a mutex object
-    pub fn create_mutex(comptime name: []const u8) Self {
+    pub fn create_mutex(options: CreateOptions) Self {
         return Self{
-            ._name = name,
+            ._name = options.name,
+            ._prioInherit = options.enable_priority_inheritance,
         };
     }
 
@@ -68,14 +70,19 @@ pub const Mutex = struct {
     /// is lock when acquire() is called the running task will be blocked until
     /// the mutex is unlocked. Cannot be called from an interrupt.
     pub fn acquire(self: *Self, options: AquireOptions) Error!void {
-        const running_task = try OsCore.validateCallMajor();
+        const running_task = try SyncControl.validateCallMajor();
         if (running_task == self._owner) return Error.MutexOwnerAquire;
         Arch.criticalStart();
         defer Arch.criticalEnd();
 
         if (self._owner) |owner| {
             //locked
-            _ = owner; //TODO: add priority inheritance check
+
+            //Priority Inheritance
+            if (self._prioInherit and running_task._priority > owner._priority) {
+                owner._priority = running_task._priority;
+                task_control.readyTask(owner);
+            }
 
             try Control.blockTask(&self._syncContext, options.timeout_ms);
         } else {
@@ -90,11 +97,20 @@ pub const Mutex = struct {
     pub fn release(self: *Self) Error!void {
         Arch.criticalStart();
         defer Arch.criticalEnd();
-        const active_task = try OsCore.validateCallMajor();
+        const active_task = try SyncControl.validateCallMajor();
 
         if (active_task == self._owner) {
             self._owner = self._syncContext._pending.head;
-            if (self._owner) |head| {
+
+            //Priority Inheritance
+            if (self._prioInherit and active_task._priority != active_task._basePriority) {
+                if (task_control.popRunningTask()) |r_task| {
+                    r_task._priority = r_task._basePriority;
+                    task_control.readyTask(r_task);
+                    Arch.criticalEnd();
+                    Arch.runScheduler();
+                }
+            } else if (self._owner) |head| {
                 task_control.readyTask(head);
                 if (head._priority < task_control.running_priority) {
                     Arch.criticalEnd();

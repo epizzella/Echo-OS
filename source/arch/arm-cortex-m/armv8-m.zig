@@ -14,10 +14,5 @@
 // limitations under the License.
 /////////////////////////////////////////////////////////////////////////////////
 
-const OsTask = @import("../../task.zig");
-const Os = @import("../../../os.zig");
-
-pub inline fn contextSwitch() void {
-    //context switch here
-    OsTask.TaskControl.current_task.?._state = OsTask.State.running;
-}
+pub const minStackSize = 17;
+pub const LOWEST_PRIO_MSK: u8 = 0xFF;

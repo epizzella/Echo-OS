@@ -15,6 +15,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 
 const Task = @import("../../task.zig").Task;
+const OsCore = @import("../../os_core.zig");
 const Self = @This();
 
 pub var scheduler: bool = false;
@@ -49,7 +50,9 @@ pub fn setInterruptActive(active: bool) void {
 //Interface
 pub const minStackSize = 10;
 
-pub fn coreInit() void {}
+pub fn coreInit(clock_config: *const OsCore.ClockConfig) void {
+    _ = clock_config;
+}
 
 pub fn initStack(task: *Task) void {
     _ = task;

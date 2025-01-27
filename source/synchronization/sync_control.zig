@@ -70,7 +70,7 @@ pub const SyncControl = struct {
     pub fn blockTask(blocker: *SyncContext, timeout_ms: u32) !void {
         if (task_control.popRunningTask()) |task| {
             blocker._pending.insertSorted(task);
-            task._timeout = (timeout_ms * OsCore.getOsConfig().system_clock_freq_hz) / 1000;
+            task._timeout = (timeout_ms * OsCore.getOsConfig().clock_config.os_sys_clock_freq_hz) / 1000;
             task._state = OsTask.State.blocked;
             Arch.criticalEnd();
             Arch.runScheduler();
@@ -89,7 +89,7 @@ pub const SyncControl = struct {
     }
 
     pub fn abort(blocker: *SyncContext, task: *Task) Error!void {
-        const running_task = try OsCore.validateCallMinor();
+        const running_task = try validateCallMinor();
         if (!blocker._init) return Error.Uninitialized;
         const q = task._queue orelse return Error.TaskNotBlockedBySync;
         if (q != &blocker._pending) return Error.TaskNotBlockedBySync;
@@ -171,17 +171,20 @@ fn createControlList(comptime T: type) type {
 
         pub fn add(self: *Self, new: *T) Error!void {
             if (new._init) return Error.Reinitialized;
+            Arch.criticalStart();
             new._next = self.list;
             if (self.list) |l| {
                 l._prev = new;
             }
             self.list = new;
             new._init = true;
+            Arch.criticalEnd();
         }
 
         pub fn remove(self: *Self, detach: *T) Error!void {
             if (!detach._init) return Error.Uninitialized;
 
+            Arch.criticalStart();
             if (self.list == detach) {
                 self.list = detach._next;
             }
@@ -197,6 +200,28 @@ fn createControlList(comptime T: type) type {
             detach._next = null;
             detach._prev = null;
             detach._init = false;
+            Arch.criticalEnd();
         }
     };
+}
+
+pub fn validateCallMajor() Error!*Task {
+    const running_task = try validateCallMinor();
+
+    if (OsCore.getOsConfig().timer_config.timer_enable and //
+        running_task == &OsCore.timer_task and //
+        OsTimer.getCallbackExecution())
+    {
+        return Error.IllegalTimerTask;
+    }
+
+    if (running_task._priority == OsTask.IDLE_PRIORITY_LEVEL) return Error.IllegalIdleTask;
+    if (Arch.interruptActive()) return Error.IllegalInterruptAccess;
+    return running_task;
+}
+
+pub fn validateCallMinor() Error!*Task {
+    if (!OsCore.isOsStarted()) return Error.OsOffline;
+    const running_task = task_control.table[task_control.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
+    return running_task;
 }

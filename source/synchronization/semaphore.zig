@@ -74,7 +74,7 @@ pub const Semaphore = struct {
     /// blocked until the counter's value becomes non zero. Cannot be called from an
     /// interrupt.
     pub fn wait(self: *Self, options: WaitOptions) Error!void {
-        _ = try OsCore.validateCallMajor();
+        _ = try SyncControl.validateCallMajor();
         if (!self._syncContext._init) return Error.Uninitialized;
         Arch.criticalStart();
         defer Arch.criticalEnd();
@@ -97,7 +97,7 @@ pub const Semaphore = struct {
     pub fn post(self: *Self, options: PostOptions) Error!void {
         Arch.criticalStart();
         defer Arch.criticalEnd();
-        const running_task = try OsCore.validateCallMinor();
+        const running_task = try SyncControl.validateCallMinor();
 
         if (self._syncContext._pending.head) |head| {
             task_control.readyTask(head);

@@ -22,16 +22,15 @@ const Arch = ArchInterface.Arch;
 const os_config = &OsCore.getOsConfig;
 const SyncContext = OsCore.SyncContext;
 const Error = OsCore.Error;
+const SyncControl = @import("synchronization/sync_control.zig");
 
 pub const Task = struct {
-    const Self = @This();
-
     _stack: []usize,
     _stack_ptr: usize = 0, //updated when os is started
-    _state: State = State.ready,
+    _state: State = State.uninitialized,
     _queue: ?*TaskQueue = null,
     _subroutine: *const fn () anyerror!void,
-    _subroutineErrHandler: ?*const fn (err: anyerror) void = null,
+    _subroutineExitHandler: ?*const fn (task: *Task, err: anyerror!void) void = null,
     _timeout: u32 = 0,
     _timed_out: bool = false,
     _priority: u5,
@@ -42,6 +41,8 @@ pub const Task = struct {
     _init: bool = false,
     _name: []const u8,
 
+    const Self = @This();
+
     pub const TaskConfig = struct {
         /// Task name
         name: []const u8,
@@ -51,49 +52,78 @@ pub const Task = struct {
         subroutine: *const fn () anyerror!void,
         /// If `subroutine` returns an erorr that error will be passed to `subroutineErrHandler`.
         /// The task is suspsended after `subroutineErrHandler` completes, or if `subroutine` returns void.
-        subroutineErrHandler: ?*const fn (err: anyerror) void = null,
+        subroutineExitHandler: ?*const fn (task: *Task, err: anyerror!void) void = null,
         ///Priority level of the task.  Lower number = higher priority.
         priority: u5,
     };
 
     /// Create a task
     pub fn create_task(config: TaskConfig) Task {
+        if (config.stack.len < Arch.minStackSize) {
+            @panic("Task stack size smaller than minimum required.");
+        }
+
         return Task{
             ._name = config.name,
             ._stack = config.stack,
             ._priority = config.priority,
             ._basePriority = config.priority,
             ._subroutine = config.subroutine,
-            ._subroutineErrHandler = config.subroutineErrHandler,
+            ._subroutineExitHandler = config.subroutineExitHandler,
         };
     }
 
     /// Add task to the OS
     pub fn init(self: *Self) void {
         if (!self._init) {
-            task_control.readyTask(self);
+            Arch.initStack(self);
+            Arch.criticalStart();
             self._init = true;
+            task_control.readyTask(self);
+            Arch.criticalEnd();
         }
+    }
+
+    /// Remove task from the OS
+    ///
+    /// This function will not return if `self` is the running task
+    pub fn deinit(self: *Self) Error!void {
+        const running_task = try SyncControl.validateCallMajor();
+        Arch.criticalStart();
+        //TODO:  Check if task owns a mutex & release it.
+        self._init = false;
+        self._state = State.uninitialized;
+        task_control.removeTask(self);
+        if (running_task == self) {
+            Arch.criticalEnd();
+            Arch.runScheduler();
+        }
+        Arch.criticalEnd();
     }
 
     /// Suspend the task
     pub fn suspendMe(self: *Self) Error!void {
         if (!self._init) return OsCore.Error.Uninitialized;
-        //TODO: return an error if the task is blocked.
+        if (self._priority == IDLE_PRIORITY_LEVEL) return OsCore.Error.IllegalIdleTask;
+        Arch.criticalStart();
         task_control.suspendTask(self);
+        Arch.criticalEnd();
         Arch.runScheduler();
     }
 
     /// Resume the task
     pub fn resumeMe(self: *Self) Error!void {
         if (!self._init) return OsCore.Error.Uninitialized;
-        //TODO: return an error if the task is not suspended.
+        if (self._priority == IDLE_PRIORITY_LEVEL) return OsCore.Error.IllegalIdleTask;
+        if (!task_control.table[self._priority].suspended_tasks.contains(self)) return OsCore.Error.IllegalTaskResume;
+        Arch.criticalStart();
         task_control.readyTask(self);
+        Arch.criticalEnd();
         Arch.runScheduler();
     }
 };
 
-pub const State = enum { running, ready, suspended, yeilded, blocked, blocked_timedout, exited };
+pub const State = enum { running, ready, suspended, yeilded, blocked, uninitialized };
 
 pub var task_control: TaskControl = .{};
 
@@ -109,24 +139,8 @@ pub const TaskControl = struct {
     ready_mask: u32 = 0, //          mask of ready tasks
     running_priority: u6 = 0x00, //  priority level of the current running task
 
-    pub var current_task: ?*volatile Task = null;
-    pub var next_task: *volatile Task = undefined;
-
-    ///Initalize the stacks for every task added to the OS
-    pub fn initAllStacks(self: *TaskControl) void {
-        if (!OsCore.isOsStarted()) {
-            for (&self.table) |*row| {
-                var task = row.ready_tasks.head;
-                while (true) {
-                    if (task) |t| {
-                        Arch.initStack(t);
-                        task = t._to_tail;
-                    }
-                    if (task == null) break;
-                }
-            }
-        }
-    }
+    pub export var current_task: ?*volatile Task = null;
+    pub export var next_task: *volatile Task = undefined;
 
     inline fn clearReadyBit(self: *TaskControl, priority: u6) void {
         self.ready_mask &= ~(ONE << (priorityAdjust[priority]));
@@ -160,6 +174,14 @@ pub const TaskControl = struct {
         self.addSuspended(task);
     }
 
+    ///Remove task
+    pub fn removeTask(self: *TaskControl, task: *Task) void {
+        if (task._queue) |q| _ = q.remove(task);
+        if (self.table[task._priority].ready_tasks.head == null) {
+            self.clearReadyBit(task._priority);
+        }
+    }
+
     ///Add task to the active task queue
     fn addReady(self: *TaskControl, task: *Task) void {
         self.table[task._priority].ready_tasks.insertAfter(task, null);
@@ -177,7 +199,7 @@ pub const TaskControl = struct {
     ///Add task to the suspended task queue
     fn addSuspended(self: *TaskControl, task: *Task) void {
         self.table[task._priority].suspended_tasks.insertAfter(task, null);
-        if (task._state != State.exited) task._state = State.suspended;
+        task._state = State.suspended;
     }
 
     ///Pop the active task from its active queue
@@ -236,6 +258,7 @@ pub const TaskControl = struct {
     }
 
     pub fn addIdleTask(self: *TaskControl, idle_task: *Task) void {
+        Arch.initStack(idle_task);
         self.table[IDLE_PRIORITY_LEVEL].ready_tasks.insertAfter(idle_task, null);
     }
 
@@ -246,7 +269,6 @@ const TaskStateQ = struct {
     ready_tasks: TaskQueue = .{},
     yielded_tasks: TaskQueue = .{},
     suspended_tasks: TaskQueue = .{},
-    exited_tasks: TaskQueue = .{},
 };
 
 pub const TaskQueue = struct {
@@ -404,19 +426,17 @@ pub const TaskQueue = struct {
 };
 
 pub fn taskTopRoutine() void {
-    if (task_control.table[task_control.running_priority].ready_tasks.head) |running_task| {
-        running_task._subroutine() catch |err| {
-            if (running_task._subroutineErrHandler) |errHandler| {
-                errHandler(err);
-            }
-        };
-    }
+    const task = task_control.getRunningTask();
+    const err = task._subroutine();
 
     Arch.criticalStart();
-    if (task_control.popRunningTask()) |active_task| {
-        task_control.addSuspended(active_task);
-        active_task._state = State.exited;
+    task_control.removeTask(task);
+    task._init = false;
+    task._state = State.uninitialized;
+    if (task._subroutineExitHandler) |exitHandler| {
+        exitHandler(task, err);
     }
     Arch.criticalEnd();
+
     Arch.runScheduler();
 }

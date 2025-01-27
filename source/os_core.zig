@@ -20,6 +20,8 @@ const Semaphore = @import("synchronization/semaphore.zig");
 const EventGroup = @import("synchronization/event_group.zig");
 const ArchInterface = @import("arch/arch_interface.zig");
 const OsSyncControl = @import("synchronization/sync_control.zig");
+const OsTimer = @import("synchronization/timer.zig");
+const builtin = @import("builtin");
 
 pub const Task = OsTask.Task;
 
@@ -29,9 +31,8 @@ const SyncControl = OsSyncControl.SyncControl;
 const TimerControl = OsSyncControl.TimerControl;
 
 pub const DEFAULT_IDLE_TASK_SIZE = Arch.minStackSize;
-const DEFAULT_SYS_CLK_FREQ = 1000; // 1 Khz
 
-var os_config: OsConfig = .{};
+var os_config: OsConfig = undefined;
 
 pub fn getOsConfig() OsConfig {
     return os_config;
@@ -48,24 +49,35 @@ fn idle_subroutine() !void {
 }
 
 pub const OsConfig = struct {
-    /// The frequency of the system clock in hz. This does not set the system clock.  TIt simply informs
-    /// the OS of the system clock's frequenncy.  Default = 1000hz.
-    system_clock_freq_hz: u32 = DEFAULT_SYS_CLK_FREQ,
-    /// Function run by the idle task. Replaces the default idle task.  This subroutine cannot be suspended or blocked;
-    idle_task_subroutine: *const fn () anyerror!void = &idle_subroutine,
-    /// Number of words in the idle task stack.   Note:  if idle_task_subroutine is provided idle_stack_size must be
-    /// larger than DEFAULT_IDLE_TASK_SIZE;
-    idle_stack_size: u32 = DEFAULT_IDLE_TASK_SIZE,
-    /// Function run at the beginning of the sysTick interrupt;
+    /// OS & CPU clock Configuration
+    clock_config: ClockConfig,
+    /// Idle Task Configuration
+    idle_task_config: IdleTaskConfig = .{},
+    /// Function to execute at the beginning of the sysTick interrupt;
     os_tick_callback: ?*const fn () void = null,
     /// Software Timer Configuration
     timer_config: TimerConfig = .{},
 };
 
+pub const IdleTaskConfig = struct {
+    /// Subroutine executed by the idle task. Replaces the default idle task.  This subroutine cannot be suspended or blocked;
+    idle_task_subroutine: *const fn () anyerror!void = &idle_subroutine,
+    /// Number of words in the idle task stack.   Note:  if idle_task_subroutine is provided idle_stack_size must be
+    /// larger than DEFAULT_IDLE_TASK_SIZE;
+    idle_stack_size: usize = DEFAULT_IDLE_TASK_SIZE,
+};
+
+pub const ClockConfig = struct {
+    /// The frequency of the OS system clock in hz.
+    os_sys_clock_freq_hz: u32,
+    ///The frequency of the CPU clock in hz
+    cpu_clock_freq_hz: u32,
+};
+
 pub const TimerConfig = struct {
     timer_enable: bool = false,
     timer_task_priority: u5 = 0,
-    timer_stack_size: u32 = 0,
+    timer_stack_size: usize = 0,
 };
 
 var os_started: bool = false;
@@ -78,27 +90,75 @@ pub fn isOsStarted() bool {
     return os_started;
 }
 
+pub export var g_stack_offset: usize = 0x08;
+
+pub var timer_task: Task = undefined;
+
+/// Start Multitasking
+pub inline fn startOS(comptime config: OsConfig) void {
+    const iss = config.idle_task_config.idle_stack_size;
+    if (isOsStarted() == false) {
+        comptime {
+            if (iss < DEFAULT_IDLE_TASK_SIZE) {
+                @compileError("Idle stack size cannont be less than the default size.");
+            }
+        }
+
+        setOsConfig(config);
+
+        Arch.coreInit(&config.clock_config);
+
+        var idle_stack: [iss]u32 = [_]u32{0xDEADC0DE} ** iss;
+        var idle_task = Task.create_task(.{
+            .name = "idle task",
+            .priority = 0, //Idle task priority is ignored
+            .stack = &idle_stack,
+            .subroutine = config.idle_task_config.idle_task_subroutine,
+        });
+
+        task_ctrl.addIdleTask(&idle_task);
+
+        var timer_stack: [config.timer_config.timer_stack_size]u32 = undefined;
+
+        if (config.timer_config.timer_enable) {
+            comptime {
+                if (config.timer_config.timer_stack_size < DEFAULT_IDLE_TASK_SIZE) {
+                    @compileError("Timer stack size cannont be less than the default size.");
+                }
+            }
+            timer_stack = [_]u32{0xDEADC0DE} ** config.timer_config.timer_stack_size;
+            timer_task = Task.create_task(.{
+                .name = "timer task",
+                .priority = config.timer_config.timer_task_priority,
+                .stack = &timer_stack,
+                .subroutine = OsTimer.timerSubroutine,
+            });
+
+            timer_task.init();
+            OsTimer.timer_sem.init() catch unreachable;
+        }
+
+        //Find offset to stack ptr as zig does not guarantee struct field order
+        g_stack_offset = @abs(@intFromPtr(&idle_task._stack_ptr) -% @intFromPtr(&idle_task));
+
+        setOsStarted();
+        Arch.runScheduler(); //begin os
+
+        if (Arch.isDebugAttached()) {
+            // Os failed to start.  Likely something CPU specific is configured incorrectly.
+            @breakpoint();
+        }
+
+        if (!builtin.is_test) unreachable;
+    }
+}
+
 /// Schedule the next task to run
 pub fn schedule() void {
     task_ctrl.setNextRunningTask();
     if (task_ctrl.validSwitch()) {
         Arch.runContextSwitch();
     }
-}
-
-//TODO: Move the validateCall functions into SyncControl & add checks for init
-pub fn validateCallMajor() Error!*Task {
-    if (!os_started) return Error.OsOffline;
-    const running_task = task_ctrl.table[task_ctrl.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
-    if (running_task._priority == OsTask.IDLE_PRIORITY_LEVEL) return Error.IllegalIdleTask;
-    if (Arch.interruptActive()) return Error.IllegalInterruptAccess;
-    return running_task;
-}
-
-pub fn validateCallMinor() Error!*Task {
-    if (!os_started) return Error.OsOffline;
-    const running_task = task_ctrl.table[task_ctrl.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
-    return running_task;
 }
 
 pub const SyncContext = struct {
@@ -118,6 +178,7 @@ pub const SyncContext = struct {
     };
 };
 
+/// System tick counter
 var ticks: u64 = 0;
 
 pub const Time = struct {
@@ -130,15 +191,15 @@ pub const Time = struct {
 
     /// Get the current number of elapsed ticks as milliseconds (rounded down)
     pub fn getTicksMs() u64 {
-        return (ticks * 1000) / os_config.system_clock_freq_hz;
+        return (ticks * 1000) / os_config.clock_config.os_sys_clock_freq_hz;
     }
 
     /// Put the active task to sleep.  It will become ready to run again after `time_ms` milliseconds.
     /// * `time_ms` when converted to system ticks cannot exceed 2^32 system ticks.
     pub fn delay(time_ms: u32) Error!void {
-        var running_task = try validateCallMajor();
+        var running_task = try validateCall();
         if (time_ms != 0) {
-            var timeout: u32 = math.mul(u32, time_ms, os_config.system_clock_freq_hz) catch return Error.SleepDurationOutOfRange;
+            var timeout: u32 = math.mul(u32, time_ms, os_config.clock_config.os_sys_clock_freq_hz) catch return Error.SleepDurationOutOfRange;
             timeout /= 1000;
             Arch.criticalStart();
             task_ctrl.yeildTask(running_task);
@@ -149,11 +210,11 @@ pub const Time = struct {
     }
 
     pub const SleepTime = struct {
-        ms: u32 = 0,
-        sec: u32 = 0,
-        min: u32 = 0,
-        hr: u32 = 0,
-        days: u32 = 0,
+        ms: usize = 0,
+        sec: usize = 0,
+        min: usize = 0,
+        hr: usize = 0,
+        days: usize = 0,
     };
 
     fn sleepTimeToMs(time: *SleepTime) !u32 {
@@ -169,10 +230,26 @@ pub const Time = struct {
         return total_ms;
     }
 
-    /// Put the active task to sleep.  The value of time must be less than 2^32 milliseconds (~49.7 days) and 2^32 system ticks.
+    /// Put the active task to sleep.  The value of `time` must be less than 2^32 milliseconds (~49.7 days) and less than 2^32 system ticks.
     pub fn sleep(time: SleepTime) Error!void {
         const timeout = sleepTimeToMs(&time) catch return Error.SleepDurationOutOfRange;
         try delay(timeout);
+    }
+
+    fn validateCall() Error!*Task {
+        if (!os_started) return Error.OsOffline;
+        const running_task = task_ctrl.table[task_ctrl.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
+
+        if (getOsConfig().timer_config.timer_enable and //
+            running_task == &timer_task and //
+            OsTimer.getCallbackExecution())
+        {
+            return Error.IllegalTimerTask;
+        }
+
+        if (running_task._priority == OsTask.IDLE_PRIORITY_LEVEL) return Error.IllegalIdleTask;
+        if (Arch.interruptActive()) return Error.IllegalInterruptAccess;
+        return running_task;
     }
 };
 
@@ -199,6 +276,8 @@ pub const Error = error{
     OsOffline,
     /// Illegal call from idle task
     IllegalIdleTask,
+    /// Illegal call from timer task
+    IllegalTimerTask,
     /// Illegal call from interrupt
     IllegalInterruptAccess,
     /// A task that does not own this mutex attempted release
@@ -219,4 +298,6 @@ pub const Error = error{
     TaskPendingOnSync,
     /// The amount of time specified for the task to sleep exceeds the max value of 2^32 ms
     SleepDurationOutOfRange,
+    /// Task cannot be resumed as it is not suspended
+    IllegalTaskResume,
 };

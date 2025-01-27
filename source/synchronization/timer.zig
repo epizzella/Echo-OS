@@ -34,7 +34,7 @@ pub const CreateOptions = struct {
 pub const SetOptions = struct {
     timeout_ms: u32,
     autoreload: bool = false,
-    worker: ?*const fn () void = null,
+    callback: ?*const fn () void = null,
 };
 
 const CallbackArgs = struct {};
@@ -66,7 +66,7 @@ pub const Timer = struct {
         self._timeout_ms = options.timeout_ms;
         self._running_time_ms = options.timeout_ms;
         self._autoreload = options.autoreload;
-        self._callback = options.worker orelse return;
+        self._callback = options.callback orelse return;
     }
 
     pub fn start(self: *Self) Error!void {
@@ -92,9 +92,12 @@ pub const Timer = struct {
 
 pub var timer_sem = Semaphore.create_semaphore(.{ .name = "Timer Semaphore", .inital_value = 0 });
 
+var callback_execution = false;
 pub fn timerSubroutine() !void {
     while (true) {
+        callback_execution = false;
         try timer_sem.wait(.{});
+        callback_execution = true;
 
         var timer = Control.getExpiredList() orelse continue;
         timer._callback();
@@ -105,6 +108,10 @@ pub fn timerSubroutine() !void {
             try Control.stop(timer);
         }
     }
+}
+
+pub fn getCallbackExecution() bool {
+    return callback_execution;
 }
 
 const Error = TmrError || OsError;

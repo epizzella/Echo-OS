@@ -24,14 +24,15 @@ const ArmCortexM = @import("arm-cortex-m/arch.zig");
 //Import future architecture implementions here
 
 pub const Arch = getArch: {
-    const cpu_model = builtin.cpu.model;
+    const cpu_model = builtin.cpu.model.*;
+
     if (builtin.is_test == true) {
         break :getArch TestArch;
-    } else if (cpu_model == &cpu.cortex_m0 or //
-        cpu_model == &cpu.cortex_m0plus or //
-        cpu_model == &cpu.cortex_m3 or //
-        cpu_model == &cpu.cortex_m4 or //
-        cpu_model == &cpu.cortex_m7)
+    } else if (std.meta.eql(cpu_model, cpu.cortex_m0) or //
+        std.meta.eql(cpu_model, cpu.cortex_m0plus) or //
+        std.meta.eql(cpu_model, cpu.cortex_m3) or //
+        std.meta.eql(cpu_model, cpu.cortex_m4) or //
+        std.meta.eql(cpu_model, cpu.cortex_m7))
     {
         break :getArch ArmCortexM;
     } else {

@@ -14,68 +14,8 @@
 // limitations under the License.
 /////////////////////////////////////////////////////////////////////////////////
 
-const OsTask = @import("../../task.zig");
-const Os = @import("../../../os.zig");
-
 pub const minStackSize = 16;
 pub const LOWEST_PRIO_MSK: u2 = 0x3;
-
-pub inline fn contextSwitch() void {
-    asm volatile (
-        \\  CPSID   I   
-        \\  MOV     R12, %[x]                                   /* Save the offset in R12 */
-        \\  MOV     R14, R4                                     /* Save R4 in R14 (LR) */
-        \\                               
-        \\  LDR     %[x], [%[current_task]]                     /* If current_task is null skip context save */
-        \\  CMP     %[x], #0
-        \\  BEQ     ContextRestore
-        \\
-        \\  MRS     R1, PSP                                     /* Move process stack pointer into R12 */
-        \\  SUBS    R1, R1, #0x20                               /* Adjust stack point for R8-R11  */
-        \\
-        \\  MOV     R4, R12                                     /* Move the offset to R4 */
-        \\  STR     R1, [%[x], R4]                              /* Save the current stack pointer in current_task */
-        \\
-        \\  MOV     R4, R14                                     /* Restore R4 to is original value */ 
-        \\  STMIA   R1!, {R4-R7}                                /* Push registers R4-R7 on the stack */
-        \\
-        \\  MOV     R4, R8                                      /* Push registers R8-R11 on the stack */
-        \\  MOV     R5, R9
-        \\  MOV     R6, R10
-        \\  MOV     R7, R11
-        \\  STMIA   R1!, {R4-R7}
-        \\
-        \\ContextRestore:
-        \\  MOV     R4, R12                                     /* Move the offset to R4 */                                           
-        \\  LDR     R1, [%[next_task], R4]                      /* Set stack pointer to next_task stack pointer */
-        \\
-        \\  ADDS    R1, R1, #0x10                               /* Adjust stack pointer */
-        \\  LDMIA   R1!, {R4-R7}                                /* Pop registers R8-R11 */  
-        \\  MOV     R8,  R4                                                                
-        \\  MOV     R9,  R5
-        \\  MOV     R10, R6
-        \\  MOV     R11, R7  
-        \\
-        \\  MSR     PSP, R1                                     /* Load PSP with final stack pointer */
-        \\
-        \\  SUBS    R1, R1, #0x20                               /* Adjust stack pointer */
-        \\  LDMIA   R1!, {R4-R7}                                /* Pop register R4-R7 */
-        \\
-        \\  STR     %[next_task], [%[current_task], #0x00]      /* Set current_task to next_task */
-        \\
-        \\  MOVS    %[x], 0x02                                  /* Load EXC_RETURN with 0xFFFFFFFD*/
-        \\  MVNS    %[x], %[x]
-        \\  MOV     LR, %[x]
-        \\
-        \\  CPSIE   I                         
-        \\  BX      LR
-        :
-        : [next_task] "l" (OsTask.TaskControl.next_task),
-          [current_task] "l" (&OsTask.TaskControl.current_task),
-          [x] "l" (Os.g_stack_offset),
-        : "R1", "R4"
-    );
-}
 
 /////////////////////////////////////////////
 //   System Control Register Addresses    //
@@ -83,10 +23,10 @@ pub inline fn contextSwitch() void {
 pub const ACTLR_ADDRESS: u32 = 0xE000E008; // Auxiliary Control Register
 
 //SysTic Timer is optional on armv6-m
-pub const STCSR_ADDRESS: u32 = 0xE000E010; // SysTick Control and Status Register
-pub const STRVR_ADDRESS: u32 = 0xE000E014; // SysTick Reload Value Register
-pub const STCVR_ADDRESS: u32 = 0xE000E018; // SysTick Current Value Register
-pub const STCALIB_ADDRESS: u32 = 0xE000E01C; //  SysTick Calibration Value Register (Implementation specific)
+pub const SYST_CSR_ADDRESS: u32 = 0xE000E010; //   SysTick Control and Status Register
+pub const SYST_RVR_ADDRESS: u32 = 0xE000E014; //   SysTick Reload Value Register
+pub const SYST_CVR_ADDRESS: u32 = 0xE000E018; //   SysTick Current Value Register
+pub const SYST_CALIB_ADDRESS: u32 = 0xE000E01C; // SysTick Calibration Value Register (Implementation specific)
 
 pub const CPUID_ADDRESS: u32 = 0xE000ED00; // CPUID Base Register
 pub const ICSR_ADDRESS: u32 = 0xE000ED04; //  Interrupt Control and State Register (RW or RO)
@@ -108,6 +48,55 @@ pub const DEMCR_ADDRESS: u32 = 0xE000EDFC; // Exception and Monitor Control Regi
 /////////////////////////////////////////////
 //    System Control Register Structs     //
 ///////////////////////////////////////////
+
+///SysTick Control and Status Register
+pub const SYST_CSR_REG = packed struct {
+    /// RW - Indicates if the SysTick counter is enabled
+    ENABLE: bool,
+    /// RW - Indicates if counting to 0 causes the SysTick exception to pend.
+    /// False: Count to 0 does not affect the SysTick exception status
+    /// True: Count to 0 changes the SysTick exception status to pending.
+    TICKINT: bool,
+    /// RW - Indicates the SysTick clock source:
+    /// 0 = SysTick uses the IMPLEMENTATION DEFINED external reference clock.
+    /// 1 = SysTick uses the processor clock.
+    /// If no external clock is provided, this bit reads as 1 and ignores writes.
+    CLKSOURCE: u1,
+    /// Reserved
+    RESERVED_3_15: u13,
+    /// Indicates whether the counter has counted to 0 since the last read of this register
+    /// False = Timer has not counted to 0.
+    /// True = Timer has counted to 0.
+    COUNTFLAG: bool,
+    RESERVED_17_31: u15,
+    comptime {
+        if (@bitSizeOf(@This()) != @bitSizeOf(u32)) @compileError("Register struct must be must be 32 bits");
+    }
+};
+
+///SysTick Reload Value Register
+const SYST_RVR_REG = packed struct {
+    /// RW - The value to load into the SYST_CVR when the counter reaches 0.
+    RELOAD: u24,
+    ///Reserved
+    RESERVED_24_31: u8,
+
+    comptime {
+        if (@bitSizeOf(@This()) != @bitSizeOf(u32)) @compileError("Register struct must be must be 32 bits");
+    }
+};
+
+/// Vector Table Offset Register
+pub const VTOR_REG = packed struct {
+    /// Reserved
+    RESERVED_0_6: u7,
+    /// RW - Bits 31-7 of the vector table address
+    TBLOFF: u25,
+
+    comptime {
+        if (@bitSizeOf(@This()) != @bitSizeOf(u32)) @compileError("Register struct must be must be 32 bits");
+    }
+};
 
 ///Interrupt Control State Register
 pub const ICSR_REG = packed struct {
@@ -139,13 +128,26 @@ pub const ICSR_REG = packed struct {
     }
 };
 
+///System Handler Priority Register 2
+pub const SHPR2_REG = packed struct {
+    RESERVED_0_7: u8,
+    RESERVED_8_15: u8,
+    RESERVED_16_23: u8,
+    /// RW - Systme Handler 11 Priority: Debug Monitor
+    PRI_SVC: u8,
+
+    comptime {
+        if (@bitSizeOf(@This()) != @bitSizeOf(u32)) @compileError("Register struct must be must be 32 bits");
+    }
+};
+
 ///System Handler Priority Register 3
 pub const SHPR3_REG = packed struct {
     RESERVED_0_21: u22,
-    /// RW - Systme Handler 14 Priority
+    /// RW - System Handler 14 Priority: Pend_SV
     PRI_PENDSV: u2,
     RESERVED_24_29: u6,
-    /// RW - Systme Handler 15 Priority
+    /// RW - System Handler 15 Priority: SystTick
     PRI_SYSTICK: u2,
 
     comptime {
