@@ -4,12 +4,22 @@ const cpu = std.Target.arm.cpu;
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const enable_software_timers = b.option(bool, "enable_software_timers", "Software Timer: Enable = True; Disable = False") orelse false;
+
+    //future configurable features:
+    //  Debug info
+    //  Statistics Task
+
+    const os_features = b.addOptions();
+    os_features.addOption(bool, "enable_software_timers", enable_software_timers);
 
     const echo = b.addModule("EchoOS", .{
         .root_source_file = b.path("os.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    echo.addOptions("echoConfig", os_features);
 
     const cpu_model = target.result.cpu.model.*;
 

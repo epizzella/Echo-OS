@@ -19,6 +19,8 @@ const OsCore = @import("../os_core.zig");
 const OsTimer = @import("timer.zig");
 const ArchInterface = @import("../arch/arch_interface.zig");
 
+const OsBuildConfig = @import("echoConfig");
+
 const SyncList = createControlList(SyncContext);
 const Error = OsCore.Error;
 const task_control = &OsTask.task_control;
@@ -208,7 +210,7 @@ fn createControlList(comptime T: type) type {
 pub fn validateCallMajor() Error!*Task {
     const running_task = try validateCallMinor();
 
-    if (OsCore.getOsConfig().timer_config.timer_enable and //
+    if (OsBuildConfig.enable_software_timers and //
         running_task == &OsCore.timer_task and //
         OsTimer.getCallbackExecution())
     {

@@ -23,6 +23,8 @@ const OsSyncControl = @import("synchronization/sync_control.zig");
 const OsTimer = @import("synchronization/timer.zig");
 const builtin = @import("builtin");
 
+const OsBuildConfig = @import("echoConfig");
+
 pub const Task = OsTask.Task;
 
 const Arch = ArchInterface.Arch;
@@ -38,7 +40,7 @@ pub fn getOsConfig() OsConfig {
     return os_config;
 }
 
-pub fn setOsConfig(config: OsConfig) void {
+pub fn setOsConfig(comptime config: OsConfig) void {
     if (!os_started) {
         os_config = config;
     }
@@ -56,7 +58,7 @@ pub const OsConfig = struct {
     /// Function to execute at the beginning of the sysTick interrupt;
     os_tick_callback: ?*const fn () void = null,
     /// Software Timer Configuration
-    timer_config: TimerConfig = .{},
+    timer_config: ?TimerConfig = null,
 };
 
 pub const IdleTaskConfig = struct {
@@ -75,9 +77,8 @@ pub const ClockConfig = struct {
 };
 
 pub const TimerConfig = struct {
-    timer_enable: bool = false,
-    timer_task_priority: u5 = 0,
-    timer_stack_size: usize = 0,
+    timer_task_priority: u5,
+    timer_stack_size: usize,
 };
 
 var os_started: bool = false;
@@ -118,22 +119,34 @@ pub inline fn startOS(comptime config: OsConfig) void {
 
         task_ctrl.addIdleTask(&idle_task);
 
-        var timer_stack: [config.timer_config.timer_stack_size]u32 = undefined;
-
-        if (config.timer_config.timer_enable) {
-            comptime {
-                if (config.timer_config.timer_stack_size < DEFAULT_IDLE_TASK_SIZE) {
-                    @compileError("Timer stack size cannont be less than the default size.");
+        var timer_stack = comptime blk: {
+            if (OsBuildConfig.enable_software_timers) {
+                if (config.timer_config) |tmr_config| {
+                    if (tmr_config.timer_stack_size < DEFAULT_IDLE_TASK_SIZE) {
+                        @compileError("Timer stack size cannont be less than the default size.");
+                    }
+                    const stack: [tmr_config.timer_stack_size]u32 = [_]u32{0xDEADC0DE} ** tmr_config.timer_stack_size;
+                    break :blk stack;
+                } else {
+                    @compileError("Software timers enabled but TimerConfig passed to startOS()");
+                }
+            } else {
+                if (config.timer_config != null) {
+                    @compileError("TimerConfig passed to startOS() but software timers are disabled ");
                 }
             }
-            timer_stack = [_]u32{0xDEADC0DE} ** config.timer_config.timer_stack_size;
-            timer_task = Task.create_task(.{
-                .name = "timer task",
-                .priority = config.timer_config.timer_task_priority,
-                .stack = &timer_stack,
-                .subroutine = OsTimer.timerSubroutine,
-            });
+            break :blk {};
+        };
 
+        if (OsBuildConfig.enable_software_timers) {
+            if (config.timer_config) |tmr_config| {
+                timer_task = Task.create_task(.{
+                    .name = "timer task",
+                    .priority = tmr_config.timer_task_priority,
+                    .stack = &timer_stack,
+                    .subroutine = OsTimer.timerSubroutine,
+                });
+            }
             timer_task.init();
             OsTimer.timer_sem.init() catch unreachable;
         }
@@ -240,7 +253,7 @@ pub const Time = struct {
         if (!os_started) return Error.OsOffline;
         const running_task = task_ctrl.table[task_ctrl.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
 
-        if (getOsConfig().timer_config.timer_enable and //
+        if (OsBuildConfig.enable_software_timers and //
             running_task == &timer_task and //
             OsTimer.getCallbackExecution())
         {
@@ -261,8 +274,11 @@ pub inline fn OsTick() void {
 
     if (os_started) {
         ticks +%= 1;
+        if (OsBuildConfig.enable_software_timers) {
+            TimerControl.updateTimeOut();
+        }
+
         SyncControl.updateTimeOut();
-        TimerControl.updateTimeOut();
         task_ctrl.updateDelayedTasks();
         task_ctrl.cycleActive();
         schedule();
