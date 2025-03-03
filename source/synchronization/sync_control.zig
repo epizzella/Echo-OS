@@ -21,7 +21,6 @@ const ArchInterface = @import("../arch/arch_interface.zig");
 
 const OsBuildConfig = @import("echoConfig");
 
-const SyncList = createControlList(SyncContext);
 const Error = OsCore.Error;
 const task_control = &OsTask.task_control;
 const Task = OsTask.Task;
@@ -39,7 +38,7 @@ pub const SyncContext = struct {
 
 pub const SyncControl = struct {
     const Self = @This();
-    var objList = SyncList{};
+    var objList: SyncControlList = .{};
 
     pub fn add(new: *SyncContext) Error!void {
         try objList.add(new);
@@ -107,105 +106,45 @@ pub const SyncControl = struct {
     }
 };
 
-const TimerList = createControlList(Timer);
-
-pub const TimerControl = struct {
+const SyncControlList = struct {
     const Self = @This();
-    var runningList = TimerList{};
-    var expiredList = TimerList{};
+    list: ?*SyncContext = null,
 
-    pub fn start(timer: *Timer) Error!void {
-        try runningList.add(timer);
-        timer._state = OsTimer.State.running;
-    }
-
-    pub fn stop(timer: *Timer) Error!void {
-        try runningList.remove(timer);
-        timer._state = OsTimer.State.idle;
-    }
-
-    pub fn restart(timer: *Timer) Error!void {
-        try expiredList.remove(timer);
-        try runningList.add(timer);
-        timer._state = OsTimer.State.running;
-    }
-
-    pub fn expired(timer: *Timer) Error!void {
-        try runningList.remove(timer);
-        try expiredList.add(timer);
-        timer._state = OsTimer.State.expired;
-    }
-
-    pub fn getExpiredList() ?*Timer {
-        return expiredList.list;
-    }
-
-    /// Update the timeout of all running timers
-    pub fn updateTimeOut() void {
-        var running_timer = runningList.list;
-        while (running_timer) |timer| {
-            timer._running_time_ms -= 1;
-            if (timer._running_time_ms == 0) {
-                expired(timer) catch {
-                    @panic("Unable to mark timer as expired");
-                };
-
-                OsTimer.timer_sem.post(.{ .runScheduler = false }) catch {
-                    @panic("Unable to post timer semaphore.");
-                };
-            }
-
-            running_timer = timer._next orelse break;
+    pub fn add(self: *Self, new: *SyncContext) Error!void {
+        if (new._init) return Error.Reinitialized;
+        Arch.criticalStart();
+        new._next = self.list;
+        if (self.list) |l| {
+            l._prev = new;
         }
+        self.list = new;
+        new._init = true;
+        Arch.criticalEnd();
+    }
+
+    pub fn remove(self: *Self, detach: *SyncContext) Error!void {
+        if (!detach._init) return Error.Uninitialized;
+
+        Arch.criticalStart();
+        defer Arch.criticalEnd();
+
+        if (self.list == detach) {
+            self.list = detach._next;
+        }
+
+        if (detach._next) |next| {
+            next._prev = detach._prev;
+        }
+
+        if (detach._prev) |prev| {
+            prev._next = detach._next;
+        }
+
+        detach._next = null;
+        detach._prev = null;
+        detach._init = false;
     }
 };
-
-fn createControlList(comptime T: type) type {
-    comptime {
-        if (!(T == Timer or T == SyncContext)) {
-            @compileError("Invalid type");
-        }
-    }
-
-    return struct {
-        list: ?*T = null,
-        const Self = @This();
-
-        pub fn add(self: *Self, new: *T) Error!void {
-            if (new._init) return Error.Reinitialized;
-            Arch.criticalStart();
-            new._next = self.list;
-            if (self.list) |l| {
-                l._prev = new;
-            }
-            self.list = new;
-            new._init = true;
-            Arch.criticalEnd();
-        }
-
-        pub fn remove(self: *Self, detach: *T) Error!void {
-            if (!detach._init) return Error.Uninitialized;
-
-            Arch.criticalStart();
-            if (self.list == detach) {
-                self.list = detach._next;
-            }
-
-            if (detach._next) |next| {
-                next._prev = detach._prev;
-            }
-
-            if (detach._prev) |prev| {
-                prev._next = detach._next;
-            }
-
-            detach._next = null;
-            detach._prev = null;
-            detach._init = false;
-            Arch.criticalEnd();
-        }
-    };
-}
 
 pub fn validateCallMajor() Error!*Task {
     const running_task = try validateCallMinor();

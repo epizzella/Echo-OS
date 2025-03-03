@@ -30,7 +30,7 @@ pub const Task = OsTask.Task;
 const Arch = ArchInterface.Arch;
 const task_ctrl = &OsTask.task_control;
 const SyncControl = OsSyncControl.SyncControl;
-const TimerControl = OsSyncControl.TimerControl;
+const TimerControl = OsTimer.TimerControl;
 
 pub const DEFAULT_IDLE_TASK_SIZE = Arch.minStackSize;
 
