@@ -150,8 +150,7 @@ pub fn validateCallMajor() Error!*Task {
     const running_task = try validateCallMinor();
 
     if (OsBuildConfig.enable_software_timers and //
-        running_task == &OsCore.timer_task and //
-        OsTimer.getCallbackExecution())
+        running_task == &OsTimer.timer_task)
     {
         return Error.IllegalTimerTask;
     }

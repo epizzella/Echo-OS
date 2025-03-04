@@ -117,7 +117,7 @@ pub const Task = struct {
         if (self._priority == IDLE_PRIORITY_LEVEL) return OsCore.Error.IllegalIdleTask;
         if (!task_control.table[self._priority].suspended_tasks.contains(self)) return OsCore.Error.IllegalTaskResume;
         Arch.criticalStart();
-        task_control.readyTask(self);
+        task_control.resumeTask(self);
         Arch.criticalEnd();
         Arch.runScheduler();
     }
@@ -172,6 +172,16 @@ pub const TaskControl = struct {
             self.clearReadyBit(task._priority);
         }
         self.addSuspended(task);
+    }
+
+    //Resume a suspended task
+    pub fn resumeTask(self: *TaskControl, task: *Task) void {
+        if (task._queue) |q| _ = q.remove(task);
+        if (task._timeout > 0) {
+            self.addYeilded(task);
+        } else {
+            self.addReady(task);
+        }
     }
 
     ///Remove task

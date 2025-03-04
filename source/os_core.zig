@@ -93,8 +93,6 @@ pub fn isOsStarted() bool {
 
 pub export var g_stack_offset: usize = 0x08;
 
-pub var timer_task: Task = undefined;
-
 /// Start Multitasking
 pub inline fn startOS(comptime config: OsConfig) void {
     const iss = config.idle_task_config.idle_stack_size;
@@ -140,15 +138,14 @@ pub inline fn startOS(comptime config: OsConfig) void {
 
         if (OsBuildConfig.enable_software_timers) {
             if (config.timer_config) |tmr_config| {
-                timer_task = Task.create_task(.{
+                OsTimer.timer_task = Task.create_task(.{
                     .name = "timer task",
                     .priority = tmr_config.timer_task_priority,
                     .stack = &timer_stack,
                     .subroutine = OsTimer.timerSubroutine,
                 });
+                OsTimer.timer_task.init();
             }
-            timer_task.init();
-            OsTimer.timer_sem.init() catch unreachable;
         }
 
         //Find offset to stack ptr as zig does not guarantee struct field order
@@ -192,18 +189,18 @@ pub const SyncContext = struct {
 };
 
 /// System tick counter
-var ticks: u64 = 0;
+var ticks: u32 = 0;
 
 pub const Time = struct {
     const math = @import("std").math;
 
     /// Get the current number of elapsed ticks
-    pub fn getTicks() u64 {
+    pub fn getTicks() u32 {
         return ticks;
     }
 
     /// Get the current number of elapsed ticks as milliseconds (rounded down)
-    pub fn getTicksMs() u64 {
+    pub fn getTicksMs() u32 {
         return (ticks * 1000) / os_config.clock_config.os_sys_clock_freq_hz;
     }
 
@@ -254,7 +251,7 @@ pub const Time = struct {
         const running_task = task_ctrl.table[task_ctrl.running_priority].ready_tasks.head orelse return Error.RunningTaskNull;
 
         if (OsBuildConfig.enable_software_timers and //
-            running_task == &timer_task and //
+            running_task == &OsTimer.timer_task and //
             OsTimer.getCallbackExecution())
         {
             return Error.IllegalTimerTask;
@@ -274,10 +271,6 @@ pub inline fn OsTick() void {
 
     if (os_started) {
         ticks +%= 1;
-        if (OsBuildConfig.enable_software_timers) {
-            TimerControl.updateTimeOut();
-        }
-
         SyncControl.updateTimeOut();
         task_ctrl.updateDelayedTasks();
         task_ctrl.cycleActive();

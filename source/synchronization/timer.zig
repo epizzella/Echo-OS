@@ -23,6 +23,7 @@ const Semaphore = OsSemaphore.Semaphore;
 const Arch = ArchInterface.Arch;
 
 const Task = OsTask.Task;
+pub var timer_task: Task = undefined;
 
 pub const State = enum { running, expired, idle };
 
@@ -78,7 +79,7 @@ pub const Timer = struct {
 
     pub fn restart(self: *Self) Error!void {
         if (self._timeout_ms == 0) return Error.TimeoutCannotBeZero;
-        self._running_time_ms = self._timeout_ms;
+        try TimerControl.restart(self);
     }
 
     pub fn cancel(self: *Self) Error!void {
@@ -95,22 +96,58 @@ pub const Timer = struct {
     }
 };
 
-pub var timer_sem = Semaphore.create_semaphore(.{ .name = "Timer Semaphore", .inital_value = 0 });
-
 var callback_execution = false;
 pub fn timerSubroutine() !void {
+    var last_time: u32 = 0;
     while (true) {
-        callback_execution = false;
-        try timer_sem.wait(.{});
-        callback_execution = true;
+        const current_time = OsCore.Time.getTicks();
+        const elapsed_time: u32 = current_time - last_time;
+        var timer = TimerControl._runningList.list;
 
-        var timer = TimerControl.getExpiredList() orelse continue;
-        timer._callback();
-        if (timer._autoreload) {
-            timer._running_time_ms = timer._timeout_ms;
-            try TimerControl.restart(timer);
+        //update timer running time
+        while (timer) |tmr| {
+            if (tmr._running_time_ms <= elapsed_time) {
+                tmr._running_time_ms = 0;
+                tmr._state = .expired;
+            } else {
+                tmr._running_time_ms -= elapsed_time;
+            }
+            timer = tmr._next;
+        }
+
+        //execute expried timers
+        callback_execution = true;
+        timer = TimerControl._runningList.list;
+        while (timer) |tmr| {
+            if (tmr._state == .expired) {
+                tmr._callback();
+                if (tmr._autoreload) {
+                    tmr._running_time_ms = tmr._timeout_ms;
+                    try TimerControl.restart(tmr);
+                } else {
+                    try TimerControl._runningList.remove(tmr);
+                }
+            } else {
+                //found the last expired timer
+                break;
+            }
+        }
+        callback_execution = false;
+
+        timer = TimerControl._runningList.list;
+        if (timer) |tmr| {
+            last_time = current_time;
+            try OsCore.Time.delay(tmr._running_time_ms);
         } else {
-            try TimerControl.stop(timer);
+            // no active timers suspend task
+            while (true) {
+                try timer_task.suspendMe();
+                // Task resumed on active timer added
+                const tmr = TimerControl._runningList.list orelse continue;
+                last_time = current_time;
+                try OsCore.Time.delay(tmr._running_time_ms);
+                break;
+            }
         }
     }
 }
@@ -132,51 +169,36 @@ const OsError = OsCore.Error;
 pub const TimerControl = struct {
     const Self = @This();
     var _runningList: TimerControlList = .{};
-    var _expiredList: TimerControlList = .{};
 
     pub fn start(timer: *Timer) Error!void {
         try _runningList.add(timer);
+        Arch.criticalStart();
+        if (_runningList.list == timer) {
+            if (timer._running_time_ms < timer_task._timeout) {
+                timer_task._timeout = timer._running_time_ms;
+            }
+        }
         timer._state = State.running;
+        Arch.criticalEnd();
+
+        if (timer_task._state == .suspended) {
+            try timer_task.resumeMe();
+        }
     }
 
     pub fn stop(timer: *Timer) Error!void {
         try _runningList.remove(timer);
+        Arch.criticalStart();
         timer._state = State.idle;
+        Arch.criticalEnd();
     }
 
     pub fn restart(timer: *Timer) Error!void {
-        try _expiredList.remove(timer);
-        try _runningList.add(timer);
-        timer._state = State.running;
-    }
-
-    pub fn expired(timer: *Timer) Error!void {
         try _runningList.remove(timer);
-        try _expiredList.add(timer);
-        timer._state = State.expired;
-    }
-
-    pub fn getExpiredList() ?*Timer {
-        return _expiredList.list;
-    }
-
-    /// Update the timeout of all running timers
-    pub fn updateTimeOut() void {
-        var running_timer = _runningList.list;
-        while (running_timer) |timer| {
-            timer._running_time_ms -= 1;
-            if (timer._running_time_ms == 0) {
-                expired(timer) catch {
-                    @panic("Unable to mark timer as expired");
-                };
-
-                timer_sem.post(.{ .runScheduler = false }) catch {
-                    @panic("Unable to post timer semaphore.");
-                };
-            }
-
-            running_timer = timer._next;
-        }
+        Arch.criticalStart();
+        timer._running_time_ms = timer._timeout_ms;
+        Arch.criticalEnd();
+        try start(timer);
     }
 };
 
