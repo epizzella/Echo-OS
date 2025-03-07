@@ -57,8 +57,6 @@ pub const OsConfig = struct {
     idle_task_config: IdleTaskConfig = .{},
     /// Function to execute at the beginning of the sysTick interrupt;
     os_tick_callback: ?*const fn () void = null,
-    /// Software Timer Configuration
-    timer_config: ?TimerConfig = null,
 };
 
 pub const IdleTaskConfig = struct {
@@ -74,11 +72,6 @@ pub const ClockConfig = struct {
     os_sys_clock_freq_hz: u32,
     ///The frequency of the CPU clock in hz
     cpu_clock_freq_hz: u32,
-};
-
-pub const TimerConfig = struct {
-    timer_task_priority: u5,
-    timer_stack_size: usize,
 };
 
 var os_started: bool = false;
@@ -117,36 +110,7 @@ pub inline fn startOS(comptime config: OsConfig) void {
 
         task_ctrl.addIdleTask(&idle_task);
 
-        var timer_stack = comptime blk: {
-            if (OsBuildConfig.enable_software_timers) {
-                if (config.timer_config) |tmr_config| {
-                    if (tmr_config.timer_stack_size < DEFAULT_IDLE_TASK_SIZE) {
-                        @compileError("Timer stack size cannont be less than the default size.");
-                    }
-                    const stack: [tmr_config.timer_stack_size]u32 = [_]u32{0xDEADC0DE} ** tmr_config.timer_stack_size;
-                    break :blk stack;
-                } else {
-                    @compileError("Software timers enabled but TimerConfig passed to startOS()");
-                }
-            } else {
-                if (config.timer_config != null) {
-                    @compileError("TimerConfig passed to startOS() but software timers are disabled ");
-                }
-            }
-            break :blk {};
-        };
-
-        if (OsBuildConfig.enable_software_timers) {
-            if (config.timer_config) |tmr_config| {
-                OsTimer.timer_task = Task.create_task(.{
-                    .name = "timer task",
-                    .priority = tmr_config.timer_task_priority,
-                    .stack = &timer_stack,
-                    .subroutine = OsTimer.timerSubroutine,
-                });
-                OsTimer.timer_task.init();
-            }
-        }
+        OsTimer.initTimer();
 
         //Find offset to stack ptr as zig does not guarantee struct field order
         g_stack_offset = @abs(@intFromPtr(&idle_task._stack_ptr) -% @intFromPtr(&idle_task));

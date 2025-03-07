@@ -16,14 +16,10 @@
 
 const OsTask = @import("../task.zig");
 const OsCore = @import("../os_core.zig");
-const SyncControl = @import("sync_control.zig");
-const OsSemaphore = @import("semaphore.zig");
 const ArchInterface = @import("../arch/arch_interface.zig");
-const Semaphore = OsSemaphore.Semaphore;
-const Arch = ArchInterface.Arch;
+const OsBuildConfig = @import("echoConfig");
 
-const Task = OsTask.Task;
-pub var timer_task: Task = undefined;
+const Arch = ArchInterface.Arch;
 
 pub const State = enum { running, expired, idle };
 
@@ -97,7 +93,7 @@ pub const Timer = struct {
 };
 
 var callback_execution = false;
-pub fn timerSubroutine() !void {
+fn timerSubroutine() !void {
     var last_time: u32 = 0;
     while (true) {
         const current_time = OsCore.Time.getTicks();
@@ -136,7 +132,7 @@ pub fn timerSubroutine() !void {
 
         timer = TimerControl._runningList.list;
         if (timer) |tmr| {
-            last_time = current_time;
+            last_time = OsCore.Time.getTicks();
             try OsCore.Time.delay(tmr._running_time_ms);
         } else {
             // no active timers suspend task
@@ -144,7 +140,7 @@ pub fn timerSubroutine() !void {
                 try timer_task.suspendMe();
                 // Task resumed on active timer added
                 const tmr = TimerControl._runningList.list orelse continue;
-                last_time = current_time;
+                last_time = OsCore.Time.getTicks();
                 try OsCore.Time.delay(tmr._running_time_ms);
                 break;
             }
@@ -266,3 +262,39 @@ const TimerControlList = struct {
         detach._init = false;
     }
 };
+
+const MIN_STACK_SIZE = Arch.minStackSize;
+var timer_stack = stack_blk: {
+    const stack_size = OsBuildConfig.software_timers_stack_size;
+
+    if (OsBuildConfig.enable_software_timers) {
+        if (stack_size < MIN_STACK_SIZE) {
+            @compileError("Timer stack size cannont be less than the min size.");
+        }
+
+        const stack: [stack_size]u32 = [_]u32{0xDEADC0DE} ** stack_size;
+        break :stack_blk stack;
+    } else {
+        break :stack_blk {};
+    }
+};
+
+pub var timer_task: OsTask.Task = task_blk: {
+    if (OsBuildConfig.enable_software_timers) {
+        const priority = OsBuildConfig.software_timers_task_priority;
+        break :task_blk OsTask.Task.create_task(.{
+            .name = "timer task",
+            .priority = priority,
+            .stack = &timer_stack,
+            .subroutine = timerSubroutine,
+        });
+    } else {
+        break :task_blk {};
+    }
+};
+
+pub fn initTimer() void {
+    if (OsBuildConfig.enable_software_timers) {
+        timer_task.init();
+    }
+}
