@@ -30,13 +30,11 @@ pub fn build(b: *std.Build) void {
     if (std.meta.eql(cpu_model, cpu.cortex_m0) or //
         std.meta.eql(cpu_model, cpu.cortex_m0plus))
     {
-        std.log.info("Echo OS target: armv6m", .{});
         echo.addAssemblyFile(b.path("source/arch/arm-cortex-m/armv6m.s"));
     } else if (std.meta.eql(cpu_model, cpu.cortex_m3) or //
         std.meta.eql(cpu_model, cpu.cortex_m4) or //
         std.meta.eql(cpu_model, cpu.cortex_m7))
     {
-        std.log.info("Echo OS target: armv7m", .{});
         if (target.query.abi) |abi| {
             if (abi == std.Target.Abi.eabihf) {
                 echo.addAssemblyFile(b.path("source/arch/arm-cortex-m/armv7m_hf.s"));
@@ -50,5 +48,15 @@ pub fn build(b: *std.Build) void {
         }
     } else {
         std.log.err("Unsupported architecture selected.", .{});
+    }
+
+    std.log.info("Echos OS Build Info:", .{});
+    std.log.info("Target: {s}", .{target.result.cpu.model.name});
+    if (enable_software_timers) {
+        std.log.info("Software timers enabled.", .{});
+        std.log.info("Software timer task priority = {}.", .{software_timers_task_priority});
+        std.log.info("Software timer task stack size = {}.", .{software_timers_stack_size});
+    } else {
+        std.log.info("Software timers disabled.", .{});
     }
 }
