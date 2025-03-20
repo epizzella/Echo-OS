@@ -57,7 +57,7 @@ Next add Echo Os as a dependacy. The target and optimization level are required.
 | Option Name                   | Type   | Default Value | Description |
 | :---------------------------- | :----: | :-----------: | :-----------| 
 | enable_software_timers        | bool   |    false      | Enables software timers. |
-| software_timers_task_priority | u5     |     31        | The priority of the software timer task.&#10;DNC when enable_software_timers is false. |
+| software_timers_task_priority | u5     |     31        | <p>The priority of the software timer task.<br>DNC when enable_software_timers is false.</p> |
 | software_timers_stack_size    | u32    |      0        | The size of the software timer stack.&#10;Total size in bytes = software_timers_stack_size * @sizeof(usize).&#10;DNC when enable_software_timers is false. |
 
 Example of adding Echo Os as a dependacy in ```build.zig```:
