@@ -1,6 +1,6 @@
 # Echo OS
 
-Echo OS is a Real Time Operating System written in Zig.  As is tradition in the realm of RTOSes, Echo OS is really more of a real time kernel than an actual OS.
+Echo OS is a Real Time Operating System written in Zig. As is tradition in the realm of RTOSes, Echo OS is really more of a real time kernel than an actual OS.
 
 ## Features
 
@@ -15,7 +15,7 @@ Echo OS has the following features:
   - Semaphores
 - Message Queues
 - Software Timers
-- Tasks return anyerror!void.  Users have the option to provide an error handler callback.
+- Tasks return anyerror!void. Users have the option to provide an error handler callback.
 
 ## Supported Architectures
 
@@ -36,32 +36,52 @@ zig fetch --save git+https://github.com/epizzella/Echo-OS
 To add a tagged version of Echo Os to your project:
 
 ```
-# Replace <REPLACE ME> with the version of Echo OS that you want to use
 zig fetch --save git+https://github.com/epizzella/Echo-OS#<REPLACE ME>
-
+Replace <REPLACE ME> with the version of Echo OS that you want to use I.E
+zig fetch --save git+https://github.com/epizzella/Echo-OS#0.1.0
 ```
 
-Then add the following to your ```build.zig```:
-
-```
-const rtos = b.dependency("EchoOS", .{ .target = target, .optimize = optimize });
-elf.root_module.addImport("EchoOS", rtos.module("EchoOS"));
-```
-
-Echo OS uses the ```cpu_model``` field in the ```target``` argument at comptime to pull in the architecture specific files.  Example:
+Then define the target. Echo OS uses the ```cpu_model``` to pull in the architecture specific files. Example:
 
 ```
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .thumb,
-        .cpu_model = std.zig.CrossTarget.CpuModel{ .explicit = &std.Target.arm.cpu.cortex_m3 },
+        .cpu_model = std.Target.Query.CpuModel{ .explicit = &std.Target.arm.cpu.cortex_m3 },
         .abi = .eabi,
         .os_tag = .freestanding,
     });
+
+```
+Next add Echo Os as a dependacy. The target and optimization level are required. There are also several options that can be set or ommited. Omitted options are set to their default value.
+
+| Option Name                   | Type   | Default Value | Description |
+| :---------------------------- | :----: | :-----------: | :-----------| 
+| enable_software_timers        | bool   |    false      | Enables software timers. |
+| software_timers_task_priority | u5     |     31        | The priority of the software timer task.&#10;DNC when enable_software_timers is false. |
+| software_timers_stack_size    | u32    |      0        | The size of the software timer stack.&#10;Total size in bytes = software_timers_stack_size * @sizeof(usize).&#10;DNC when enable_software_timers is false. |
+
+Example of adding Echo Os as a dependacy in ```build.zig```:
+
+```
+    const timer_pro: u5 = 5;
+    const timer_stack_size: u32 = 50;
+
+    //Add RTOS package
+    const rtos = b.dependency("EchoOS", .{
+        .target = target,
+        .optimize = optimize,
+        // Echo OS options
+        .enable_software_timers = true,
+        .software_timers_task_priority = timer_pro,
+        .software_timers_stack_size = timer_stack_size,
+    });
+
+elf.root_module.addImport("EchoOS", rtos.module("EchoOS"));
 ```
 
 ## API
 
-The entire API is accessabile through a single file:  os.zig.  You can use os.zig via @import: ```const Os = @import("EchoOS");```
+The entire API is accessabile through a single file: os.zig. You can use os.zig via @import: ```const Os = @import("EchoOS");```
 
 ### Basic Example
 

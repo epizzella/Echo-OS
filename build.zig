@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const enable_software_timers = b.option(bool, "enable_software_timers", "Software Timer: Enable = True; Disable = False") orelse false;
-    const software_timers_task_priority = b.option(u5, "software_timers_task_priority", "Priority level for the Timer Task") orelse 0;
+    const software_timers_task_priority = b.option(u5, "software_timers_task_priority", "Priority level for the Timer Task") orelse 31;
     const software_timers_stack_size = b.option(u32, "software_timers_stack_size", "Software timer stack size. Total number of bytes = software_timers_stack_size * sizeof(uszie)") orelse 0;
 
     //future configurable features:
